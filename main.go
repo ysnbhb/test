@@ -6,11 +6,12 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"time"
 )
 
 type Message struct {
-	username string
-	payload  string
+	Username string
+	Payload  string
 }
 
 type Server struct {
@@ -18,28 +19,31 @@ type Server struct {
 	ln         net.Listener
 	conns      map[net.Conn]string // Map of connections to user names
 	mu         sync.Mutex
-	quich      chan struct{}
+	quit       chan struct{}
 	msg        chan Message
 }
 
-func NewServer(s string) *Server {
+func NewServer(addr string) *Server {
 	return &Server{
-		listenAddr: s,
+		listenAddr: addr,
 		conns:      make(map[net.Conn]string),
-		quich:      make(chan struct{}),
+		quit:       make(chan struct{}),
 		msg:        make(chan Message, 100),
 	}
 }
 
-func (s *Server) start() error {
+func (s *Server) Start() error {
 	ln, err := net.Listen("tcp", s.listenAddr)
 	if err != nil {
 		return err
 	}
 	defer ln.Close()
 	s.ln = ln
+
 	go s.acceptLoop()
-	<-s.quich
+	go s.broadcast()
+
+	<-s.quit
 	close(s.msg)
 	return nil
 }
@@ -57,19 +61,19 @@ func (s *Server) acceptLoop() {
 
 func (s *Server) handleConnection(conn net.Conn) {
 	defer func() {
-		fmt.Println("Connection closed by", s.conns[conn])
-		conn.Close()
-
 		s.mu.Lock()
+		name := s.conns[conn]
 		delete(s.conns, conn)
 		s.mu.Unlock()
+		conn.Close()
+		fmt.Printf("Connection closed by %s\n", name)
 	}()
 
 	reader := bufio.NewReader(conn)
 	fmt.Fprint(conn, "Enter your name: ")
 	name, err := reader.ReadString('\n')
 	if err != nil {
-		fmt.Println("Error reading name from connection:", err)
+		fmt.Printf("Error reading name from connection: %v\n", err)
 		return
 	}
 	name = strings.TrimSpace(name)
@@ -78,42 +82,53 @@ func (s *Server) handleConnection(conn net.Conn) {
 	s.conns[conn] = name
 	s.mu.Unlock()
 
-	welcomeMessage := "Welcome, " + name + "!\n"
+	welcomeMessage := fmt.Sprintf("Welcome, %s!\n", name)
 	conn.Write([]byte(welcomeMessage))
-	fmt.Fprintln(conn, name+" connected from "+conn.RemoteAddr().String())
+	fmt.Fprintf(conn, "%s connected from %s\n", name, conn.RemoteAddr().String())
 
 	buf := make([]byte, 2048)
 	for {
+		timestamp := time.Now().Format("2006-01-02 15:04:05")
+		prompt := fmt.Sprintf("[%s][%s]: ", timestamp, name)
+		fmt.Fprint(conn, prompt)
+
 		n, err := conn.Read(buf)
 		if err != nil {
 			if err.Error() != "EOF" {
-				fmt.Println("Error reading from connection:", err)
+				fmt.Printf("Error reading from connection: %v\n", err)
 			}
 			break
 		}
 		if n == 0 {
-			fmt.Println("Client closed the connection:", conn.RemoteAddr().String())
+			fmt.Printf("Client closed the connection: %s\n", conn.RemoteAddr().String())
 			break
 		}
 		msgContent := strings.TrimSpace(string(buf[:n]))
 		if msgContent != "" {
 			s.msg <- Message{
-				username: name,
-				payload:  msgContent,
+				Username: name,
+				Payload:  msgContent,
 			}
 		}
 	}
 }
 
-func (s *Server) write() {
+func (s *Server) broadcast() {
 	for msg := range s.msg {
+		timestamp := time.Now().Format("2006-01-02 15:04:05")
+		formattedMessage := fmt.Sprintf("\n[%s][%s]: %s\n", timestamp, msg.Username, msg.Payload)
 		s.mu.Lock()
-		for conn := range s.conns {
-			_, err := conn.Write([]byte(fmt.Sprintf("%s: %s\n", msg.username, msg.payload)))
-			if err != nil {
-				fmt.Println("Error writing to connection:", err)
-				conn.Close()
-				delete(s.conns, conn)
+		for conn, username := range s.conns {
+			if username != msg.Username {
+				_, err := conn.Write([]byte(formattedMessage))
+				if err != nil {
+					fmt.Printf("Error writing to connection: %v\n", err)
+					conn.Close()
+					delete(s.conns, conn)
+				}
+				timestamp := time.Now().Format("2006-01-02 15:04:05")
+				prompt := fmt.Sprintf("[%s][%s]: ", timestamp, username)
+				fmt.Fprint(conn, prompt)
 			}
 		}
 		s.mu.Unlock()
@@ -121,9 +136,8 @@ func (s *Server) write() {
 }
 
 func main() {
-	ser := NewServer(":8080")
-	go ser.write()
-	if err := ser.start(); err != nil {
+	server := NewServer(":8080")
+	if err := server.Start(); err != nil {
 		fmt.Println("Error starting server:", err)
 	}
 }

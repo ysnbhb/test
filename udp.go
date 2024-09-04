@@ -8,8 +8,7 @@ import (
 	"strings"
 )
 
-// read continuously reads data from the connection and prints it to the console
-func read(conn net.Conn) {
+func readFromServer(conn net.Conn) {
 	defer conn.Close()
 	buf := make([]byte, 2048)
 	for {
@@ -37,10 +36,11 @@ func main() {
 	}
 
 	// Start reading from the server in a separate goroutine
-	go read(conn)
+	go readFromServer(conn)
 
 	// Set up reader and prompt user for their name
 	reader := bufio.NewReader(os.Stdin)
+	//fmt.Print("Enter your name: ")
 	name, err := reader.ReadString('\n')
 	if err != nil {
 		fmt.Println("Error reading name:", err)
@@ -58,7 +58,6 @@ func main() {
 	fmt.Println("Connected to server. Type your messages below:")
 
 	for {
-		fmt.Print("Message: ")
 		message, err := reader.ReadString('\n')
 		if err != nil {
 			fmt.Println("Error reading message:", err)
