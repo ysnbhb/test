@@ -55,8 +55,6 @@ func main() {
 		return
 	}
 
-	fmt.Println("Connected to server. Type your messages below:")
-
 	for {
 		message, err := reader.ReadString('\n')
 		if err != nil {

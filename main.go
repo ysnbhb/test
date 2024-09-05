@@ -21,14 +21,18 @@ type Server struct {
 	mu         sync.Mutex
 	quit       chan struct{}
 	msg        chan Message
+	User       map[string]bool
 }
+
+var MaxUser int = 10
 
 func NewServer(addr string) *Server {
 	return &Server{
 		listenAddr: addr,
 		conns:      make(map[net.Conn]string),
 		quit:       make(chan struct{}),
-		msg:        make(chan Message, 100),
+		msg:        make(chan Message, MaxUser),
+		User:       make(map[string]bool),
 	}
 }
 
@@ -41,7 +45,6 @@ func (s *Server) Start() error {
 	s.ln = ln
 
 	go s.acceptLoop()
-	go s.broadcast()
 
 	<-s.quit
 	close(s.msg)
@@ -51,11 +54,16 @@ func (s *Server) Start() error {
 func (s *Server) acceptLoop() {
 	for {
 		conn, err := s.ln.Accept()
+		if len(s.conns) >= MaxUser {
+			fmt.Fprintln(conn, "sorry bro but chat had max user \n")
+			return
+		}
 		if err != nil {
 			fmt.Println("Error accepting connection:", err)
 			continue
 		}
 		go s.handleConnection(conn)
+		go s.broadcast()
 	}
 }
 
@@ -64,30 +72,64 @@ func (s *Server) handleConnection(conn net.Conn) {
 		s.mu.Lock()
 		name := s.conns[conn]
 		delete(s.conns, conn)
+		delete(s.User, name)
 		s.mu.Unlock()
 		conn.Close()
-		fmt.Printf("Connection closed by %s\n", name)
+
+		// Broadcast leave message
+		leaveChat := fmt.Sprintf("%s -> has left our chat...\n", name)
+		s.msg <- Message{
+			Username: "Server",
+			Payload:  leaveChat,
+		}
 	}()
+	s.User["Server"] = true
 
 	reader := bufio.NewReader(conn)
-	fmt.Fprint(conn, "Enter your name: ")
-	name, err := reader.ReadString('\n')
-	if err != nil {
-		fmt.Printf("Error reading name from connection: %v\n", err)
-		return
+	name := ""
+	for {
+		fmt.Fprint(conn, "Enter your name: ")
+		nameInput, err := reader.ReadString('\n')
+		if err != nil {
+			fmt.Printf("Error reading name from connection: %v\n", err)
+			return
+		}
+		name = strings.TrimSpace(nameInput)
+		if name == "" {
+			continue
+		}
+		s.mu.Lock()
+		if _, exists := s.User[name]; !exists {
+			s.conns[conn] = name
+			s.User[name] = true
+			s.mu.Unlock()
+			break
+		}
+		s.mu.Unlock()
+		fmt.Fprint(conn, "This name is already in use. Please choose another name.\n")
 	}
-	name = strings.TrimSpace(name)
+	joinMessage := fmt.Sprintf("\n%s -> has joined our chat...\n", name)
+	for conn, username := range s.conns {
+		if username != name {
+			conn.Write([]byte(joinMessage))
+			timestamp := time.Now().Format("2006-01-02 15:04:05")
+			prompt := fmt.Sprintf("[%s][%s]: ", timestamp, username)
+			fmt.Fprint(conn, prompt)
+		}
+	}
 
-	s.mu.Lock()
-	s.conns[conn] = name
-	s.mu.Unlock()
+	// Broadcast join message
+	// s.msg <- Message{
+	// 	Username: "Server",
+	// 	Payload:  joinMessage,
+	// }
 
-	welcomeMessage := fmt.Sprintf("Welcome, %s!\n", name)
-	conn.Write([]byte(welcomeMessage))
-	fmt.Fprintf(conn, "%s connected from %s\n", name, conn.RemoteAddr().String())
+	//s.broadcast()
 
+	// Handle prompt and user messages
 	buf := make([]byte, 2048)
 	for {
+		// Send prompt after join message
 		timestamp := time.Now().Format("2006-01-02 15:04:05")
 		prompt := fmt.Sprintf("[%s][%s]: ", timestamp, name)
 		fmt.Fprint(conn, prompt)
@@ -119,7 +161,18 @@ func (s *Server) broadcast() {
 		formattedMessage := fmt.Sprintf("\n[%s][%s]: %s\n", timestamp, msg.Username, msg.Payload)
 		s.mu.Lock()
 		for conn, username := range s.conns {
-			if username != msg.Username {
+			if msg.Username == "Server" {
+				_, err := conn.Write([]byte("\n" + msg.Payload))
+				if err != nil {
+					fmt.Printf("Error writing to connection: %v\n", err)
+					conn.Close()
+					delete(s.conns, conn)
+				}
+				// Ensure prompt is correctly formatted
+				timestamp := time.Now().Format("2006-01-02 15:04:05")
+				prompt := fmt.Sprintf("[%s][%s]: ", timestamp, username)
+				fmt.Fprint(conn, prompt)
+			} else if username != msg.Username {
 				_, err := conn.Write([]byte(formattedMessage))
 				if err != nil {
 					fmt.Printf("Error writing to connection: %v\n", err)
@@ -137,6 +190,7 @@ func (s *Server) broadcast() {
 
 func main() {
 	server := NewServer(":8080")
+
 	if err := server.Start(); err != nil {
 		fmt.Println("Error starting server:", err)
 	}
