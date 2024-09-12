@@ -46,6 +46,12 @@ func (s *Server) Start() error {
 		s.listenAddr = ln.Addr().String()
 	}
 	fmt.Printf("Listening on the port %s\n", s.listenAddr)
+	namefile := fmt.Sprintf("chat%s.txt", s.listenAddr)
+	os.Remove(namefile)
+	file, err := os.Create(namefile)
+	if err != nil {
+		return err
+	}
 	defer ln.Close()
 	s.ln = ln
 
@@ -83,14 +89,8 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 		// Broadcast leave message
 		leaveChat := fmt.Sprintf("%s has left our chat...\n", name)
-		for conn, username := range s.conns {
-			conn.Write([]byte(leaveChat))
-			timestamp := time.Now().Format("2006-01-02 15:04:05")
-			prompt := fmt.Sprintf("[%s][%s]: ", timestamp, username)
-			fmt.Fprint(conn, prompt)
-		}
+		s.ServEMessage(leaveChat, name)
 	}()
-	s.User["Server"] = true
 	file, _ := os.ReadFile("logo.txt")
 	conn.Write(file)
 	reader := bufio.NewReader(conn)
@@ -117,14 +117,15 @@ func (s *Server) handleConnection(conn net.Conn) {
 		fmt.Fprint(conn, "This name is already in use. Please choose another name.\n")
 	}
 	joinMessage := fmt.Sprintf("\n%s  has joined our chat...\n", name)
-	for conn, username := range s.conns {
-		if username != name {
-			conn.Write([]byte(joinMessage))
-			timestamp := time.Now().Format("2006-01-02 15:04:05")
-			prompt := fmt.Sprintf("[%s][%s]: ", timestamp, username)
-			fmt.Fprint(conn, prompt)
-		}
-	}
+	// for conn, username := range s.conns {
+	// 	if username != name {
+	// 		conn.Write([]byte(joinMessage))
+	// 		timestamp := time.Now().Format("2006-01-02 15:04:05")
+	// 		prompt := fmt.Sprintf("[%s][%s]: ", timestamp, username)
+	// 		fmt.Fprint(conn, prompt)
+	// 	}
+	// }
+	s.ServEMessage(joinMessage, name)
 
 	// Broadcast join message
 	// s.msg <- Message{
@@ -210,4 +211,15 @@ func HandelInput(s string) string {
 		}
 	}
 	return strings.TrimSpace(res)
+}
+
+func (s *Server) ServEMessage(str string, name string) {
+	for conn, username := range s.conns {
+		if username != name {
+			conn.Write([]byte(str))
+			timestamp := time.Now().Format("2006-01-02 15:04:05")
+			prompt := fmt.Sprintf("[%s][%s]: ", timestamp, username)
+			fmt.Fprint(conn, prompt)
+		}
+	}
 }
