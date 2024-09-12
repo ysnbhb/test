@@ -23,6 +23,7 @@ type Server struct {
 	quit       chan struct{}
 	msg        chan Message
 	User       map[string]bool
+	file       *os.File
 }
 
 var MaxUser int = 10
@@ -52,8 +53,12 @@ func (s *Server) Start() error {
 	if err != nil {
 		return err
 	}
-	defer ln.Close()
+	defer func() {
+		ln.Close()
+		file.Close()
+	}()
 	s.ln = ln
+	s.file = file
 
 	go s.acceptLoop()
 
@@ -86,9 +91,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 		delete(s.User, name)
 		s.mu.Unlock()
 		conn.Close()
-
-		// Broadcast leave message
-		leaveChat := fmt.Sprintf("%s has left our chat...\n", name)
+		leaveChat := fmt.Sprintf("\n%s has left our chat...\n", name)
 		s.ServEMessage(leaveChat, name)
 	}()
 	file, _ := os.ReadFile("logo.txt")
@@ -117,25 +120,9 @@ func (s *Server) handleConnection(conn net.Conn) {
 		fmt.Fprint(conn, "This name is already in use. Please choose another name.\n")
 	}
 	joinMessage := fmt.Sprintf("\n%s  has joined our chat...\n", name)
-	// for conn, username := range s.conns {
-	// 	if username != name {
-	// 		conn.Write([]byte(joinMessage))
-	// 		timestamp := time.Now().Format("2006-01-02 15:04:05")
-	// 		prompt := fmt.Sprintf("[%s][%s]: ", timestamp, username)
-	// 		fmt.Fprint(conn, prompt)
-	// 	}
-	// }
 	s.ServEMessage(joinMessage, name)
-
-	// Broadcast join message
-	// s.msg <- Message{
-	// 	Username: "Server",
-	// 	Payload:  joinMessage,
-	// }
-
-	// s.broadcast()
-
-	// Handle prompt and user messages
+	last, _ := os.ReadFile(fmt.Sprintf("chat%s.txt", s.listenAddr))
+	PrintLastMessage(last, conn)
 	buf := make([]byte, 2048)
 	for {
 		// Send prompt after join message
@@ -167,11 +154,12 @@ func (s *Server) handleConnection(conn net.Conn) {
 func (s *Server) broadcast() {
 	for msg := range s.msg {
 		timestamp := time.Now().Format("2006-01-02 15:04:05")
-		formattedMessage := fmt.Sprintf("\n[%s][%s]: %s\n", timestamp, msg.Username, msg.Payload)
+		formattedMessage := fmt.Sprintf("[%s][%s]: %s\n", timestamp, msg.Username, msg.Payload)
 		s.mu.Lock()
 		for conn, username := range s.conns {
+			s.file.WriteString((formattedMessage))
 			if username != msg.Username {
-				_, err := conn.Write([]byte(formattedMessage))
+				_, err := conn.Write([]byte("\n" + formattedMessage))
 				if err != nil {
 					fmt.Printf("Error writing to connection: %v\n", err)
 					conn.Close()
@@ -190,7 +178,7 @@ func main() {
 	arg := os.Args[1:]
 	port := ""
 	if len(arg) == 0 {
-		port = ":8980"
+		port = ":8989"
 	} else if len(arg) == 1 {
 		port = fmt.Sprintf(":%s", arg[0])
 	} else {
@@ -206,7 +194,9 @@ func main() {
 func HandelInput(s string) string {
 	res := ""
 	for _, t := range s {
-		if t >= ' ' {
+		if t < 32 {
+			continue
+		} else {
 			res += string(t)
 		}
 	}
@@ -221,5 +211,12 @@ func (s *Server) ServEMessage(str string, name string) {
 			prompt := fmt.Sprintf("[%s][%s]: ", timestamp, username)
 			fmt.Fprint(conn, prompt)
 		}
+	}
+}
+
+func PrintLastMessage(last []byte, conn net.Conn) {
+	_, err := conn.Write(last)
+	if err != nil {
+		fmt.Println(err)
 	}
 }

@@ -26,7 +26,7 @@ func readFromServer(conn net.Conn) {
 }
 
 func main() {
-	serverAddr := "localhost:8080" // Replace with your server's address and port
+	serverAddr := "localhost:8989" // Replace with your server's address and port
 
 	// Connect to the TCP server
 	conn, err := net.Dial("tcp", serverAddr)
@@ -40,7 +40,7 @@ func main() {
 
 	// Set up reader and prompt user for their name
 	reader := bufio.NewReader(os.Stdin)
-	//fmt.Print("Enter your name: ")
+	// fmt.Print("Enter your name: ")
 	name, err := reader.ReadString('\n')
 	if err != nil {
 		fmt.Println("Error reading name:", err)
