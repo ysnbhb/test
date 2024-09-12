@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -41,6 +42,10 @@ func (s *Server) Start() error {
 	if err != nil {
 		return err
 	}
+	if len(s.listenAddr) == 1 {
+		s.listenAddr = ln.Addr().String()
+	}
+	fmt.Printf("Listening on the port %s\n", s.listenAddr)
 	defer ln.Close()
 	s.ln = ln
 
@@ -77,24 +82,27 @@ func (s *Server) handleConnection(conn net.Conn) {
 		conn.Close()
 
 		// Broadcast leave message
-		leaveChat := fmt.Sprintf("%s -> has left our chat...\n", name)
-		s.msg <- Message{
-			Username: "Server",
-			Payload:  leaveChat,
+		leaveChat := fmt.Sprintf("%s has left our chat...\n", name)
+		for conn, username := range s.conns {
+			conn.Write([]byte(leaveChat))
+			timestamp := time.Now().Format("2006-01-02 15:04:05")
+			prompt := fmt.Sprintf("[%s][%s]: ", timestamp, username)
+			fmt.Fprint(conn, prompt)
 		}
 	}()
 	s.User["Server"] = true
-
+	file, _ := os.ReadFile("logo.txt")
+	conn.Write(file)
 	reader := bufio.NewReader(conn)
 	name := ""
 	for {
-		fmt.Fprint(conn, "Enter your name: ")
+		fmt.Fprint(conn, "[ENTER YOUR NAME]:")
 		nameInput, err := reader.ReadString('\n')
 		if err != nil {
 			fmt.Printf("Error reading name from connection: %v\n", err)
 			return
 		}
-		name = strings.TrimSpace(nameInput)
+		name = HandelInput(nameInput)
 		if name == "" {
 			continue
 		}
@@ -108,7 +116,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 		s.mu.Unlock()
 		fmt.Fprint(conn, "This name is already in use. Please choose another name.\n")
 	}
-	joinMessage := fmt.Sprintf("\n%s -> has joined our chat...\n", name)
+	joinMessage := fmt.Sprintf("\n%s  has joined our chat...\n", name)
 	for conn, username := range s.conns {
 		if username != name {
 			conn.Write([]byte(joinMessage))
@@ -124,7 +132,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 	// 	Payload:  joinMessage,
 	// }
 
-	//s.broadcast()
+	// s.broadcast()
 
 	// Handle prompt and user messages
 	buf := make([]byte, 2048)
@@ -145,7 +153,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 			fmt.Printf("Client closed the connection: %s\n", conn.RemoteAddr().String())
 			break
 		}
-		msgContent := strings.TrimSpace(string(buf[:n]))
+		msgContent := HandelInput(string(buf[:n]))
 		if msgContent != "" {
 			s.msg <- Message{
 				Username: name,
@@ -161,18 +169,7 @@ func (s *Server) broadcast() {
 		formattedMessage := fmt.Sprintf("\n[%s][%s]: %s\n", timestamp, msg.Username, msg.Payload)
 		s.mu.Lock()
 		for conn, username := range s.conns {
-			if msg.Username == "Server" {
-				_, err := conn.Write([]byte("\n" + msg.Payload))
-				if err != nil {
-					fmt.Printf("Error writing to connection: %v\n", err)
-					conn.Close()
-					delete(s.conns, conn)
-				}
-				// Ensure prompt is correctly formatted
-				timestamp := time.Now().Format("2006-01-02 15:04:05")
-				prompt := fmt.Sprintf("[%s][%s]: ", timestamp, username)
-				fmt.Fprint(conn, prompt)
-			} else if username != msg.Username {
+			if username != msg.Username {
 				_, err := conn.Write([]byte(formattedMessage))
 				if err != nil {
 					fmt.Printf("Error writing to connection: %v\n", err)
@@ -189,9 +186,28 @@ func (s *Server) broadcast() {
 }
 
 func main() {
-	server := NewServer(":8080")
+	arg := os.Args[1:]
+	port := ""
+	if len(arg) == 0 {
+		port = ":8980"
+	} else if len(arg) == 1 {
+		port = fmt.Sprintf(":%s", arg[0])
+	} else {
+		fmt.Println("[USAGE]: ./TCPChat $port")
+	}
+	server := NewServer(port)
 
 	if err := server.Start(); err != nil {
 		fmt.Println("Error starting server:", err)
 	}
+}
+
+func HandelInput(s string) string {
+	res := ""
+	for _, t := range s {
+		if t >= ' ' {
+			res += string(t)
+		}
+	}
+	return strings.TrimSpace(res)
 }
