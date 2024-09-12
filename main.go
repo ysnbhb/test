@@ -63,6 +63,7 @@ func (s *Server) Start() error {
 	go s.acceptLoop()
 
 	<-s.quit
+	os.Remove(namefile)
 	close(s.msg)
 	return nil
 }
@@ -71,7 +72,7 @@ func (s *Server) acceptLoop() {
 	for {
 		conn, err := s.ln.Accept()
 		if len(s.conns) >= MaxUser {
-			fmt.Fprintln(conn, "sorry bro but chat had max user \n")
+			fmt.Fprintln(conn, "sorry bro but chat had max user")
 			return
 		}
 		if err != nil {
